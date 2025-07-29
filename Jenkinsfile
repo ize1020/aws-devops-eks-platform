@@ -67,11 +67,6 @@ spec:
                     '''
                 }
             }
-            post {
-                always {
-                    publishTestResults testResultsPattern: 'test-results.xml'
-                }
-            }
         }
 
         stage('Security Scan') {
