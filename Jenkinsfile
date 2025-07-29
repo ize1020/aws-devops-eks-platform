@@ -123,20 +123,10 @@ spec:
         stage('Deploy to Kubernetes') {
             steps {
                 container('kubectl') {
-                    withCredentials([aws(credentialsId: 'aws-credentials')]) {
-                        sh '''
-                            echo "Deploying to Kubernetes..."
-                            
-                            # Update deployment image directly (kubectl already has kubeconfig)
-                            kubectl set image deployment/${DEPLOYMENT_NAME} demoapp=992382652909.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPOSITORY}:${IMAGE_TAG} -n ${K8S_NAMESPACE}
-                            
-                            # Wait for rollout
-                            kubectl rollout status deployment/${DEPLOYMENT_NAME} -n ${K8S_NAMESPACE} --timeout=300s
-                            
-                            # Verify deployment
-                            kubectl get pods -n ${K8S_NAMESPACE}
-                        '''
-                    }
+                    sh '''
+                        kubectl set image deployment/demoapp-deployment demoapp=992382652909.dkr.ecr.eu-west-1.amazonaws.com/demoapp:7 -n demoapp
+                        kubectl get pods -n demoapp
+                    '''
                 }
             }
         }
