@@ -125,20 +125,10 @@ spec:
                 container('kubectl') {
                     withCredentials([aws(credentialsId: 'aws-credentials')]) {
                         sh '''
-                            # Install AWS CLI in kubectl container
-                            curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
-                            unzip awscliv2.zip
-                            ./aws/install
-                            
-                            # Get AWS Account ID
-                            AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
                             echo "Deploying to Kubernetes..."
                             
-                            # Update kubeconfig
-                            aws eks update-kubeconfig --region ${AWS_REGION} --name demoapp-eks-cluster
-                            
-                            # Update deployment image
-                            kubectl set image deployment/${DEPLOYMENT_NAME} demoapp=${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPOSITORY}:${IMAGE_TAG} -n ${K8S_NAMESPACE}
+                            # Update deployment image directly (kubectl already has kubeconfig)
+                            kubectl set image deployment/${DEPLOYMENT_NAME} demoapp=992382652909.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPOSITORY}:${IMAGE_TAG} -n ${K8S_NAMESPACE}
                             
                             # Wait for rollout
                             kubectl rollout status deployment/${DEPLOYMENT_NAME} -n ${K8S_NAMESPACE} --timeout=300s
