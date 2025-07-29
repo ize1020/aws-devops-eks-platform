@@ -15,18 +15,8 @@ spec:
       value: ""
     - name: DOCKER_HOST
       value: "tcp://localhost:2375"
-  - name: kubectl
-    image: bitnami/kubectl:1.31
-    command:
-    - cat
-    tty: true
   - name: node
     image: node:20-alpine
-    command:
-    - cat
-    tty: true
-  - name: aws-cli
-    image: amazon/aws-cli:latest
     command:
     - cat
     tty: true
@@ -38,8 +28,6 @@ spec:
         AWS_REGION = 'eu-west-1'
         ECR_REPOSITORY = 'demoapp'
         IMAGE_TAG = "${env.BUILD_NUMBER}"
-        K8S_NAMESPACE = 'demoapp'
-        DEPLOYMENT_NAME = 'demoapp'  // ✅ FIXED: Correct name
     }
 
     stages {
@@ -114,54 +102,11 @@ spec:
                             docker tag ${ECR_REPOSITORY}:latest ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPOSITORY}:latest
                             docker push ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPOSITORY}:${IMAGE_TAG}
                             docker push ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPOSITORY}:latest
+                            
+                            echo "🎉 Docker image successfully pushed to ECR!"
+                            echo "✅ Image: ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPOSITORY}:${IMAGE_TAG}"
                         '''
                     }
-                }
-            }
-        }
-
-        stage('Deploy to Kubernetes') {
-            steps {
-                container('kubectl') {
-                    withCredentials([aws(credentialsId: 'aws-credentials')]) {  // ✅ FIXED: Added credentials
-                        sh '''
-                            # Get AWS Account ID
-                            AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
-                            echo "Deploying Build ${IMAGE_TAG} to Kubernetes..."
-                            
-                            # ✅ FIXED: Use dynamic variables instead of hardcoded values
-                            kubectl set image deployment/${DEPLOYMENT_NAME} demoapp=${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPOSITORY}:${IMAGE_TAG} -n ${K8S_NAMESPACE}
-                            
-                            # Wait for rollout to complete
-                            kubectl rollout status deployment/${DEPLOYMENT_NAME} -n ${K8S_NAMESPACE} --timeout=300s
-                            
-                            # Verify deployment
-                            kubectl get pods -n ${K8S_NAMESPACE}
-                        '''
-                    }
-                }
-            }
-        }
-
-        stage('Integration Tests') {
-            steps {
-                container('kubectl') {
-                    sh '''
-                        echo "Running integration tests..."
-                        
-                        # Get service endpoint
-                        SERVICE_IP=$(kubectl get svc demoapp-service -n ${K8S_NAMESPACE} -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
-                        if [ -z "$SERVICE_IP" ]; then
-                            SERVICE_IP=$(kubectl get svc demoapp-service -n ${K8S_NAMESPACE} -o jsonpath='{.spec.clusterIP}')
-                        fi
-                        
-                        echo "Service endpoint: $SERVICE_IP"
-                        
-                        # Wait for pods to be ready
-                        kubectl wait --for=condition=ready pod -l app=demoapp -n ${K8S_NAMESPACE} --timeout=300s
-                        
-                        echo "Integration tests passed!"
-                    '''
                 }
             }
         }
@@ -172,10 +117,12 @@ spec:
             cleanWs()
         }
         success {
-            echo '🎉 Pipeline completed successfully!'
+            echo '🎉 CI Pipeline completed successfully!'
+            echo '✅ Code built, tested, and pushed to ECR!'
+            echo '📦 Ready for deployment!'
         }
         failure {
-            echo '❌ Pipeline failed. Check logs for details.'
+            echo '❌ CI Pipeline failed. Check logs for details.'
         }
     }
 }
