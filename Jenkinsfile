@@ -96,10 +96,13 @@ spec:
 
         stage('Push to ECR') {
             steps {
-                container('aws-cli') {
+                container('docker') {
                     withCredentials([aws(credentialsId: 'aws-credentials')]) {
                         sh '''
-                            # Get AWS Account ID using the credentials from Jenkins
+                            # Install AWS CLI in docker container
+                            apk add --no-cache aws-cli
+                            
+                            # Get AWS Account ID
                             AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
                             echo "AWS Account ID: ${AWS_ACCOUNT_ID}"
                             
@@ -122,6 +125,11 @@ spec:
                 container('kubectl') {
                     withCredentials([aws(credentialsId: 'aws-credentials')]) {
                         sh '''
+                            # Install AWS CLI in kubectl container
+                            curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+                            unzip awscliv2.zip
+                            ./aws/install
+                            
                             # Get AWS Account ID
                             AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
                             echo "Deploying to Kubernetes..."
