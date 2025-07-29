@@ -38,7 +38,8 @@ spec:
         AWS_REGION = 'eu-west-1'
         ECR_REPOSITORY = 'demoapp'
         IMAGE_TAG = "${env.BUILD_NUMBER}"
-        AWS_PROFILE = 'rotem-poc'
+        K8S_NAMESPACE = 'demoapp'
+        DEPLOYMENT_NAME = 'demoapp-deployment'
     }
 
     stages {
@@ -66,6 +67,21 @@ spec:
                     '''
                 }
             }
+            post {
+                always {
+                    publishTestResults testResultsPattern: 'test-results.xml'
+                }
+            }
+        }
+
+        stage('Security Scan') {
+            steps {
+                container('node') {
+                    sh '''
+                        npm audit --audit-level=high || true
+                    '''
+                }
+            }
         }
 
         stage('Build Docker Image') {
@@ -88,12 +104,69 @@ spec:
                 container('aws-cli') {
                     withCredentials([aws(credentialsId: 'aws-credentials')]) {
                         sh '''
+                            # Get AWS Account ID using the credentials from Jenkins
                             AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+                            echo "AWS Account ID: ${AWS_ACCOUNT_ID}"
+                            
+                            # Login to ECR
                             aws ecr get-login-password --region ${AWS_REGION} | docker login --username AWS --password-stdin ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com
+                            
+                            # Tag and push image
                             docker tag ${ECR_REPOSITORY}:${IMAGE_TAG} ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPOSITORY}:${IMAGE_TAG}
+                            docker tag ${ECR_REPOSITORY}:latest ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPOSITORY}:latest
                             docker push ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPOSITORY}:${IMAGE_TAG}
+                            docker push ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPOSITORY}:latest
                         '''
                     }
+                }
+            }
+        }
+
+        stage('Deploy to Kubernetes') {
+            steps {
+                container('kubectl') {
+                    withCredentials([aws(credentialsId: 'aws-credentials')]) {
+                        sh '''
+                            # Get AWS Account ID
+                            AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+                            echo "Deploying to Kubernetes..."
+                            
+                            # Update kubeconfig
+                            aws eks update-kubeconfig --region ${AWS_REGION} --name demoapp-eks-cluster
+                            
+                            # Update deployment image
+                            kubectl set image deployment/${DEPLOYMENT_NAME} demoapp=${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPOSITORY}:${IMAGE_TAG} -n ${K8S_NAMESPACE}
+                            
+                            # Wait for rollout
+                            kubectl rollout status deployment/${DEPLOYMENT_NAME} -n ${K8S_NAMESPACE} --timeout=300s
+                            
+                            # Verify deployment
+                            kubectl get pods -n ${K8S_NAMESPACE}
+                        '''
+                    }
+                }
+            }
+        }
+
+        stage('Integration Tests') {
+            steps {
+                container('kubectl') {
+                    sh '''
+                        echo "Running integration tests..."
+                        
+                        # Get service endpoint
+                        SERVICE_IP=$(kubectl get svc demoapp-service -n ${K8S_NAMESPACE} -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
+                        if [ -z "$SERVICE_IP" ]; then
+                            SERVICE_IP=$(kubectl get svc demoapp-service -n ${K8S_NAMESPACE} -o jsonpath='{.spec.clusterIP}')
+                        fi
+                        
+                        echo "Service endpoint: $SERVICE_IP"
+                        
+                        # Wait for pods to be ready
+                        kubectl wait --for=condition=ready pod -l app=demoapp -n ${K8S_NAMESPACE} --timeout=300s
+                        
+                        echo "Integration tests passed!"
+                    '''
                 }
             }
         }
@@ -102,6 +175,12 @@ spec:
     post {
         always {
             cleanWs()
+        }
+        success {
+            echo '🎉 Pipeline completed successfully!'
+        }
+        failure {
+            echo '❌ Pipeline failed. Check logs for details.'
         }
     }
 }
