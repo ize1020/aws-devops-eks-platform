@@ -39,7 +39,7 @@ spec:
         ECR_REPOSITORY = 'demoapp'
         IMAGE_TAG = "${env.BUILD_NUMBER}"
         K8S_NAMESPACE = 'demoapp'
-        DEPLOYMENT_NAME = 'demoapp-deployment'
+        DEPLOYMENT_NAME = 'demoapp'  // ✅ FIXED: Correct name
     }
 
     stages {
@@ -123,10 +123,22 @@ spec:
         stage('Deploy to Kubernetes') {
             steps {
                 container('kubectl') {
-                    sh '''
-                        kubectl set image deployment/demoapp-deployment demoapp=992382652909.dkr.ecr.eu-west-1.amazonaws.com/demoapp:7 -n demoapp
-                        kubectl get pods -n demoapp
-                    '''
+                    withCredentials([aws(credentialsId: 'aws-credentials')]) {  // ✅ FIXED: Added credentials
+                        sh '''
+                            # Get AWS Account ID
+                            AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+                            echo "Deploying Build ${IMAGE_TAG} to Kubernetes..."
+                            
+                            # ✅ FIXED: Use dynamic variables instead of hardcoded values
+                            kubectl set image deployment/${DEPLOYMENT_NAME} demoapp=${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPOSITORY}:${IMAGE_TAG} -n ${K8S_NAMESPACE}
+                            
+                            # Wait for rollout to complete
+                            kubectl rollout status deployment/${DEPLOYMENT_NAME} -n ${K8S_NAMESPACE} --timeout=300s
+                            
+                            # Verify deployment
+                            kubectl get pods -n ${K8S_NAMESPACE}
+                        '''
+                    }
                 }
             }
         }
