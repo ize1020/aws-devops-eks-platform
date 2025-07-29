@@ -11,7 +11,7 @@ NC='\033[0m' # No Color
 
 # Configuration
 AWS_REGION=${AWS_REGION:-eu-west-1}
-AWS_PROFILE=${AWS_PROFILE:-rotem-poc}
+AWS_PROFILE=${AWS_PROFILE:-your-profile-name}
 CLUSTER_NAME="demoapp-eks-cluster"
 
 echo -e "${BLUE}===========================================${NC}"
