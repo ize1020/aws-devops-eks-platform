@@ -1,7 +1,7 @@
 # PowerShell Cleanup Script for Windows
 param(
     [string]$AwsRegion = "eu-west-1",
-    [string]$AwsProfile = "rotem-poc",
+    [string]$AwsProfile = "your-profile-name",
     [string]$ClusterName = "demoapp-eks-cluster"
 )
 
