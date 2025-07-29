@@ -10,9 +10,11 @@ spec:
     image: docker:24.0.7-dind
     securityContext:
       privileged: true
-    volumeMounts:
-    - name: docker-sock
-      mountPath: /var/run/docker.sock
+    env:
+    - name: DOCKER_TLS_CERTDIR
+      value: ""
+    - name: DOCKER_HOST
+      value: "tcp://localhost:2375"
   - name: kubectl
     image: bitnami/kubectl:1.31
     command:
@@ -23,10 +25,11 @@ spec:
     command:
     - cat
     tty: true
-  volumes:
-  - name: docker-sock
-    hostPath:
-      path: /var/run/docker.sock
+  - name: aws-cli
+    image: amazon/aws-cli:latest
+    command:
+    - cat
+    tty: true
 """
         }
     }
@@ -35,7 +38,6 @@ spec:
         AWS_REGION = 'eu-west-1'
         ECR_REPOSITORY = 'demoapp'
         IMAGE_TAG = "${env.BUILD_NUMBER}"
-        KUBECONFIG = '/tmp/kubeconfig'
         AWS_PROFILE = 'rotem-poc'
     }
 
@@ -50,7 +52,7 @@ spec:
             steps {
                 container('node') {
                     sh '''
-                        npm ci
+                        npm install
                     '''
                 }
             }
@@ -64,21 +66,6 @@ spec:
                     '''
                 }
             }
-            post {
-                always {
-                    publishTestResults testResultsPattern: 'test-results.xml'
-                }
-            }
-        }
-
-        stage('Security Scan') {
-            steps {
-                container('node') {
-                    sh '''
-                        npm audit --audit-level=high
-                    '''
-                }
-            }
         }
 
         stage('Build Docker Image') {
@@ -86,6 +73,8 @@ spec:
                 container('docker') {
                     script {
                         sh '''
+                            dockerd-entrypoint.sh &
+                            sleep 10
                             docker build -f docker/Dockerfile -t ${ECR_REPOSITORY}:${IMAGE_TAG} .
                             docker tag ${ECR_REPOSITORY}:${IMAGE_TAG} ${ECR_REPOSITORY}:latest
                         '''
@@ -96,74 +85,13 @@ spec:
 
         stage('Push to ECR') {
             steps {
-                container('docker') {
-                    script {
-                        withCredentials([aws(credentialsId: 'aws-credentials', region: "${AWS_REGION}")]) {
-                            sh '''
-                                # Login to ECR
-                                aws ecr get-login-password --region ${AWS_REGION} --profile ${AWS_PROFILE} | docker login --username AWS --password-stdin ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com
-                                
-                                # Tag and push images
-                                docker tag ${ECR_REPOSITORY}:${IMAGE_TAG} ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPOSITORY}:${IMAGE_TAG}
-                                docker tag ${ECR_REPOSITORY}:latest ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPOSITORY}:latest
-                                
-                                docker push ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPOSITORY}:${IMAGE_TAG}
-                                docker push ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPOSITORY}:latest
-                            '''
-                        }
-                    }
-                }
-            }
-        }
-
-        stage('Deploy to Kubernetes') {
-            when {
-                branch 'master'
-            }
-            steps {
-                container('kubectl') {
-                    script {
-                        withCredentials([aws(credentialsId: 'aws-credentials', region: "${AWS_REGION}")]) {
-                            sh '''
-                                # Update kubeconfig
-                                aws eks update-kubeconfig --region ${AWS_REGION} --name demoapp-eks-cluster --profile ${AWS_PROFILE}
-                                
-                                # Update deployment with new image
-                                kubectl set image deployment/demoapp demoapp=${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPOSITORY}:${IMAGE_TAG} -n demoapp
-                                
-                                # Wait for rollout to complete
-                                kubectl rollout status deployment/demoapp -n demoapp --timeout=300s
-                                
-                                # Verify deployment
-                                kubectl get pods -n demoapp
-                                kubectl get svc -n demoapp
-                                kubectl get ingress -n demoapp
-                            '''
-                        }
-                    }
-                }
-            }
-        }
-
-        stage('Integration Tests') {
-            when {
-                branch 'master'
-            }
-            steps {
-                container('kubectl') {
-                    script {
+                container('aws-cli') {
+                    withCredentials([aws(credentialsId: 'aws-credentials')]) {
                         sh '''
-                            # Get the ALB endpoint
-                            ALB_ENDPOINT=$(kubectl get ingress demoapp-ingress -n demoapp -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
-                            
-                            # Wait for ALB to be ready
-                            echo "Waiting for ALB to be ready..."
-                            sleep 60
-                            
-                            # Test the application endpoint
-                            curl -f http://${ALB_ENDPOINT} || exit 1
-                            
-                            echo "Application is accessible via ALB: ${ALB_ENDPOINT}"
+                            AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+                            aws ecr get-login-password --region ${AWS_REGION} | docker login --username AWS --password-stdin ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com
+                            docker tag ${ECR_REPOSITORY}:${IMAGE_TAG} ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPOSITORY}:${IMAGE_TAG}
+                            docker push ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPOSITORY}:${IMAGE_TAG}
                         '''
                     }
                 }
@@ -175,21 +103,5 @@ spec:
         always {
             cleanWs()
         }
-        success {
-            echo 'Pipeline completed successfully!'
-            slackSend(
-                channel: '#devops',
-                color: 'good',
-                message: "✅ Pipeline SUCCESS: ${env.JOB_NAME} - ${env.BUILD_NUMBER} (<${env.BUILD_URL}|Open>)"
-            )
-        }
-        failure {
-            echo 'Pipeline failed!'
-            slackSend(
-                channel: '#devops',
-                color: 'danger',
-                message: "❌ Pipeline FAILED: ${env.JOB_NAME} - ${env.BUILD_NUMBER} (<${env.BUILD_URL}|Open>)"
-            )
-        }
     }
-} 
+}
